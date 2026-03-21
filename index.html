@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Tools</title>
+
+  <!-- CDN Libraries -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+  <style>
+    /* ============================================
+       Reset & Base
+       ============================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* ============================================
+       Header
+       ============================================ */
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    .header p {
+      font-size: 14px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    /* ============================================
+       Drop Zone
+       ============================================ */
+    .drop-zone {
+      background: #fff;
+      border: 2px dashed #d1d5db;
+      border-radius: 16px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 24px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: #6366f1;
+      background: #eef2ff;
+    }
+    .drop-zone-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      display: block;
+    }
+    .drop-zone-text {
+      font-size: 16px;
+      color: #4b5563;
+    }
+    .drop-zone-hint {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-top: 8px;
+    }
+    .file-info {
+      display: none;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      padding: 12px 20px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      color: #166534;
+      align-items: center;
+      gap: 12px;
+    }
+    .file-info.visible {
+      display: flex;
+    }
+    .file-info-name { font-weight: 600; }
+    .file-info-pages { color: #4ade80; }
+    .file-info-clear {
+      margin-left: auto;
+      background: none;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #166534;
+      transition: background 0.2s;
+    }
+    .file-info-clear:hover { background: #dcfce7; }
+
+    /* ============================================
+       Bento Grid
+       ============================================ */
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: auto;
+      gap: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* ============================================
+       Bento Card
+       ============================================ */
+    .bento-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      transition: box-shadow 0.2s, opacity 0.2s;
+      display: flex;
+      flex-direction: column;
+    }
+    .bento-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .bento-card.disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .bento-card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .bento-card .card-desc {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+
+    /* Card grid positions using named grid areas */
+    .bento-grid {
+      grid-template-areas:
+        "image   gif     reorder reorder"
+        "delete  blank   reorder reorder"
+        "title   title   title   title";
+    }
+    .card-image    { grid-area: image; }
+    .card-gif      { grid-area: gif; }
+    .card-reorder  { grid-area: reorder; }
+    .card-delete   { grid-area: delete; }
+    .card-blank    { grid-area: blank; }
+    .card-title    { grid-area: title; }
+
+    /* ============================================
+       Form Controls
+       ============================================ */
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .form-group select,
+    .form-group input[type="text"],
+    .form-group input[type="number"] {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #f9fafb;
+      transition: border-color 0.2s;
+    }
+    .form-group select:focus,
+    .form-group input:focus {
+      outline: none;
+      border-color: #6366f1;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+    }
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-primary:disabled {
+      background: #c7d2fe;
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      background: #ef4444;
+      color: #fff;
+    }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #374151;
+    }
+    .btn-secondary:hover { background: #d1d5db; }
+
+    /* ============================================
+       Progress Bar
+       ============================================ */
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: 3px;
+      margin-top: 12px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar.visible { display: block; }
+    .progress-bar-fill {
+      height: 100%;
+      background: #6366f1;
+      border-radius: 3px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+    .progress-text {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+      display: none;
+    }
+    .progress-text.visible { display: block; }
+
+    /* ============================================
+       Thumbnail Grid (for reorder, delete)
+       ============================================ */
+    .thumbnail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 8px;
+      flex: 1;
+      overflow-y: auto;
+      max-height: 320px;
+      padding: 4px;
+    }
+    .thumbnail-item {
+      position: relative;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      aspect-ratio: 3/4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f9fafb;
+    }
+    .thumbnail-item canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .thumbnail-item .page-number {
+      position: absolute;
+      bottom: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .thumbnail-item.selected {
+      border-color: #ef4444;
+    }
+    .thumbnail-item.dragging {
+      opacity: 0.5;
+    }
+    .thumbnail-item.drag-over-item {
+      border-color: #6366f1;
+      border-style: dashed;
+    }
+
+    /* ============================================
+       Insert Position Select (blank page)
+       ============================================ */
+    .insert-options {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .insert-options button {
+      padding: 6px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #f9fafb;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .insert-options button.active {
+      background: #6366f1;
+      color: #fff;
+      border-color: #6366f1;
+    }
+
+    /* ============================================
+       Responsive
+       ============================================ */
+    @media (max-width: 900px) {
+      .bento-grid {
+        grid-template-columns: 1fr 1fr;
+        grid-template-areas:
+          "image   gif"
+          "reorder reorder"
+          "delete  blank"
+          "title   title";
+      }
+    }
+    @media (max-width: 600px) {
+      body { padding: 12px; }
+      .bento-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "image"
+          "gif"
+          "reorder"
+          "delete"
+          "blank"
+          "title";
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <h1>PDF Tools</h1>
+    <p>ブラウザ上でPDFを加工。ファイルはアップロードされません。</p>
+  </div>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="dropZone">
+    <span class="drop-zone-icon">📄</span>
+    <div class="drop-zone-text">PDFファイルをドラッグ&ドロップ</div>
+    <div class="drop-zone-hint">またはクリックしてファイルを選択</div>
+    <input type="file" id="fileInput" accept=".pdf" hidden>
+  </div>
+
+  <!-- File Info -->
+  <div class="file-info" id="fileInfo">
+    <span>📄</span>
+    <span class="file-info-name" id="fileName"></span>
+    <span class="file-info-pages" id="filePages"></span>
+    <button class="file-info-clear" id="clearFile">クリア</button>
+  </div>
+
+  <!-- Bento Grid -->
+  <div class="bento-grid" id="bentoGrid">
+
+    <!-- PDF → 画像 -->
+    <div class="bento-card card-image disabled" id="cardImage">
+      <h2>PDF → 画像</h2>
+      <p class="card-desc">各ページをPNG/JPEGに変換</p>
+      <div class="form-group">
+        <label>出力形式</label>
+        <select id="imageFormat">
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>解像度</label>
+        <select id="imageDpi">
+          <option value="72">72 DPI（低）</option>
+          <option value="150" selected>150 DPI（標準）</option>
+          <option value="300">300 DPI（高）</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="convertImage">変換してダウンロード</button>
+      <div class="progress-bar" id="imageProgress"><div class="progress-bar-fill" id="imageProgressFill"></div></div>
+      <div class="progress-text" id="imageProgressText"></div>
+    </div>
+
+    <!-- PDF → GIF -->
+    <div class="bento-card card-gif disabled" id="cardGif">
+      <h2>PDF → GIF</h2>
+      <p class="card-desc">全ページをアニメーションGIFに</p>
+      <div class="form-group">
+        <label>1ページの表示秒数</label>
+        <input type="number" id="gifDelay" value="2" min="0.5" max="10" step="0.5">
+      </div>
+      <button class="btn btn-primary" id="convertGif">GIFを作成</button>
+      <div class="progress-bar" id="gifProgress"><div class="progress-bar-fill" id="gifProgressFill"></div></div>
+      <div class="progress-text" id="gifProgressText"></div>
+    </div>
+
+    <!-- ページ並び替え -->
+    <div class="bento-card card-reorder disabled" id="cardReorder">
+      <h2>ページ並び替え</h2>
+      <p class="card-desc">ドラッグ&ドロップで順序を変更</p>
+      <div class="thumbnail-grid" id="reorderGrid"></div>
+      <button class="btn btn-primary" id="applyReorder" style="margin-top:12px;">並び替えを適用してダウンロード</button>
+    </div>
+
+    <!-- ページ削除 -->
+    <div class="bento-card card-delete disabled" id="cardDelete">
+      <h2>ページ削除</h2>
+      <p class="card-desc">不要なページを選んで削除</p>
+      <div class="thumbnail-grid" id="deleteGrid"></div>
+      <button class="btn btn-danger" id="applyDelete" style="margin-top:12px;">選択ページを削除</button>
+    </div>
+
+    <!-- 空白ページ追加 -->
+    <div class="bento-card card-blank disabled" id="cardBlank">
+      <h2>空白ページ追加</h2>
+      <p class="card-desc">指定位置に空白ページを挿入</p>
+      <div class="form-group">
+        <label>挿入位置</label>
+        <select id="blankPosition">
+          <option value="start">先頭</option>
+          <option value="end">末尾</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="addBlank">空白ページを追加</button>
+    </div>
+
+    <!-- タイトル編集 -->
+    <div class="bento-card card-title disabled" id="cardTitle">
+      <h2>タイトル編集</h2>
+      <p class="card-desc">PDFのプロパティにあるタイトルを変更</p>
+      <div class="form-group">
+        <label>現在のタイトル</label>
+        <input type="text" id="currentTitle" disabled placeholder="(PDFを読み込むと表示)">
+      </div>
+      <div class="form-group">
+        <label>新しいタイトル</label>
+        <input type="text" id="newTitle" placeholder="新しいタイトルを入力">
+      </div>
+      <button class="btn btn-primary" id="applyTitle">タイトルを変更してダウンロード</button>
+    </div>
+
+  </div>
+
+  <script type="module">
+    // ============================================
+    // PDF.js の初期化 (ESM)
+    // ============================================
+    const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
+    // ============================================
+    // アプリケーション状態
+    // ============================================
+    const state = {
+      pdfBytes: null,      // 元のPDFのArrayBuffer
+      pdfLib: null,        // pdf-lib の PDFDocument
+      pdfJs: null,         // pdfjs-dist の PDFDocumentProxy
+      pageCount: 0,
+      fileName: '',
+      reorderPages: [],    // ページ並び替え用の順序配列
+      deletePages: new Set(), // 削除選択されたページ番号
+    };
+
+    // ============================================
+    // DOM要素
+    // ============================================
+    const $ = (id) => document.getElementById(id);
+    const dropZone = $('dropZone');
+    const fileInput = $('fileInput');
+    const fileInfo = $('fileInfo');
+    const cards = document.querySelectorAll('.bento-card');
+
+    // ============================================
+    // PDF読み込み
+    // ============================================
+    async function loadPdf(file) {
+      state.fileName = file.name;
+      state.pdfBytes = await file.arrayBuffer();
+
+      // pdf-lib で読み込み（操作用）
+      state.pdfLib = await PDFLib.PDFDocument.load(state.pdfBytes);
+      state.pageCount = state.pdfLib.getPageCount();
+
+      // pdfjs-dist で読み込み（レンダリング用）
+      const loadingTask = pdfjsLib.getDocument({ data: state.pdfBytes.slice(0) });
+      state.pdfJs = await loadingTask.promise;
+
+      // UI更新
+      $('fileName').textContent = file.name;
+      $('filePages').textContent = `${state.pageCount} ページ`;
+      fileInfo.classList.add('visible');
+      dropZone.style.display = 'none';
+
+      // カードを有効化
+      cards.forEach(card => card.classList.remove('disabled'));
+
+      // タイトル表示
+      const title = state.pdfLib.getTitle() || '';
+      $('currentTitle').value = title;
+      $('newTitle').value = title;
+
+      // 空白ページ挿入位置のドロップダウンを更新
+      updateBlankPositionOptions();
+
+      // サムネイル生成
+      await renderThumbnails();
+    }
+
+    // ============================================
+    // ドラッグ&ドロップ / ファイル選択
+    // ============================================
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) loadPdf(e.target.files[0]);
+    });
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('drag-over');
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === 'application/pdf') loadPdf(file);
+    });
+
+    // クリアボタン
+    $('clearFile').addEventListener('click', () => {
+      state.pdfBytes = null;
+      state.pdfLib = null;
+      state.pdfJs = null;
+      state.pageCount = 0;
+      state.fileName = '';
+      state.reorderPages = [];
+      state.deletePages.clear();
+      fileInfo.classList.remove('visible');
+      dropZone.style.display = '';
+      cards.forEach(card => card.classList.add('disabled'));
+      $('reorderGrid').innerHTML = '';
+      $('deleteGrid').innerHTML = '';
+      $('currentTitle').value = '';
+      $('newTitle').value = '';
+      fileInput.value = '';
+    });
+
+    // ============================================
+    // サムネイルレンダリング
+    // ============================================
+    async function renderPageToCanvas(pageNum, width) {
+      const page = await state.pdfJs.getPage(pageNum);
+      const viewport = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      return canvas;
+    }
+
+    async function renderThumbnails() {
+      const reorderGrid = $('reorderGrid');
+      const deleteGrid = $('deleteGrid');
+      reorderGrid.innerHTML = '';
+      deleteGrid.innerHTML = '';
+
+      state.reorderPages = Array.from({ length: state.pageCount }, (_, i) => i + 1);
+      state.deletePages.clear();
+
+      for (let i = 1; i <= state.pageCount; i++) {
+        const canvas = await renderPageToCanvas(i, 150);
+
+        // 並び替え用サムネイル
+        const reorderItem = createThumbnailItem(canvas.cloneNode(false), i, 'reorder');
+        const reorderCtx = reorderItem.querySelector('canvas').getContext('2d');
+        reorderCtx.drawImage(canvas, 0, 0);
+        reorderGrid.appendChild(reorderItem);
+
+        // 削除用サムネイル
+        const deleteItem = createThumbnailItem(canvas, i, 'delete');
+        deleteGrid.appendChild(deleteItem);
+      }
+
+      setupDragAndDrop();
+    }
+
+    function createThumbnailItem(canvas, pageNum, mode) {
+      const item = document.createElement('div');
+      item.classList.add('thumbnail-item');
+      item.dataset.page = pageNum;
+      item.appendChild(canvas);
+
+      const label = document.createElement('span');
+      label.classList.add('page-number');
+      label.textContent = pageNum;
+      item.appendChild(label);
+
+      if (mode === 'reorder') {
+        item.draggable = true;
+      }
+      if (mode === 'delete') {
+        item.addEventListener('click', () => {
+          if (state.deletePages.has(pageNum)) {
+            state.deletePages.delete(pageNum);
+            item.classList.remove('selected');
+          } else {
+            state.deletePages.add(pageNum);
+            item.classList.add('selected');
+          }
+        });
+      }
+      return item;
+    }
+
+    // ============================================
+    // ドラッグ&ドロップ（ページ並び替え）
+    // ============================================
+    function setupDragAndDrop() {
+      const grid = $('reorderGrid');
+      let draggedItem = null;
+
+      grid.addEventListener('dragstart', (e) => {
+        draggedItem = e.target.closest('.thumbnail-item');
+        if (draggedItem) {
+          draggedItem.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+        }
+      });
+
+      grid.addEventListener('dragend', () => {
+        if (draggedItem) {
+          draggedItem.classList.remove('dragging');
+          draggedItem = null;
+        }
+        grid.querySelectorAll('.thumbnail-item').forEach(el => el.classList.remove('drag-over-item'));
+        // 順序配列を更新
+        state.reorderPages = Array.from(grid.querySelectorAll('.thumbnail-item')).map(el => parseInt(el.dataset.page));
+      });
+
+      grid.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const target = e.target.closest('.thumbnail-item');
+        if (target && target !== draggedItem) {
+          grid.querySelectorAll('.thumbnail-item').forEach(el => el.classList.remove('drag-over-item'));
+          target.classList.add('drag-over-item');
+        }
+      });
+
+      grid.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const target = e.target.closest('.thumbnail-item');
+        if (target && target !== draggedItem && draggedItem) {
+          const items = Array.from(grid.querySelectorAll('.thumbnail-item'));
+          const dragIdx = items.indexOf(draggedItem);
+          const dropIdx = items.indexOf(target);
+          if (dragIdx < dropIdx) {
+            target.after(draggedItem);
+          } else {
+            target.before(draggedItem);
+          }
+        }
+      });
+    }
+
+    // ============================================
+    // PDF → 画像変換
+    // ============================================
+    $('convertImage').addEventListener('click', async () => {
+      if (!state.pdfJs) return;
+
+      const format = $('imageFormat').value;
+      const dpi = parseInt($('imageDpi').value);
+      const scale = dpi / 72;
+      const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+      const ext = format === 'png' ? 'png' : 'jpg';
+
+      const progressBar = $('imageProgress');
+      const progressFill = $('imageProgressFill');
+      const progressText = $('imageProgressText');
+      progressBar.classList.add('visible');
+      progressText.classList.add('visible');
+
+      const zip = new JSZip();
+
+      for (let i = 1; i <= state.pageCount; i++) {
+        progressText.textContent = `${i} / ${state.pageCount} ページを変換中...`;
+        progressFill.style.width = `${(i / state.pageCount) * 100}%`;
+
+        const page = await state.pdfJs.getPage(i);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, 0.92));
+        zip.file(`page-${String(i).padStart(3, '0')}.${ext}`, blob);
+      }
+
+      progressText.textContent = 'ZIPを作成中...';
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const baseName = state.fileName.replace(/\.pdf$/i, '');
+      saveAs(zipBlob, `${baseName}_${format}_${dpi}dpi.zip`);
+
+      progressText.textContent = '完了！';
+      setTimeout(() => {
+        progressBar.classList.remove('visible');
+        progressText.classList.remove('visible');
+        progressFill.style.width = '0%';
+      }, 2000);
+    });
+
+    // ============================================
+    // PDF → GIF変換
+    // ============================================
+    $('convertGif').addEventListener('click', async () => {
+      if (!state.pdfJs) return;
+
+      const delay = parseFloat($('gifDelay').value) * 1000;
+      const progressBar = $('gifProgress');
+      const progressFill = $('gifProgressFill');
+      const progressText = $('gifProgressText');
+      progressBar.classList.add('visible');
+      progressText.classList.add('visible');
+
+      if (state.pageCount > 50) {
+        if (!confirm('50ページ以上のPDFをGIFに変換すると時間がかかる場合があります。続行しますか？')) {
+          progressBar.classList.remove('visible');
+          progressText.classList.remove('visible');
+          return;
+        }
+      }
+
+      // gif.js を動的に読み込み（Web Worker 問題を回避するためインラインで処理）
+      progressText.textContent = 'フレームを作成中...';
+      const frames = [];
+      for (let i = 1; i <= state.pageCount; i++) {
+        progressText.textContent = `${i} / ${state.pageCount} ページをレンダリング中...`;
+        progressFill.style.width = `${(i / state.pageCount) * 80}%`;
+
+        const page = await state.pdfJs.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        frames.push({ canvas, delay });
+      }
+
+      progressText.textContent = 'GIFを生成中...';
+      progressFill.style.width = '85%';
+
+      // GIF をマニュアルでエンコード（gif.js の代わりに軽量な方法）
+      // ここでは各フレームをCanvasからBlobにしてgif.jsを使う
+      try {
+        const gif = new GIF({
+          workers: 2,
+          quality: 10,
+          width: frames[0].canvas.width,
+          height: frames[0].canvas.height,
+          workerScript: gifWorkerUrl,
+        });
+
+        for (const frame of frames) {
+          gif.addFrame(frame.canvas, { delay: frame.delay });
+        }
+
+        gif.on('progress', (p) => {
+          progressFill.style.width = `${85 + p * 15}%`;
+        });
+
+        gif.on('finished', (blob) => {
+          const baseName = state.fileName.replace(/\.pdf$/i, '');
+          saveAs(blob, `${baseName}.gif`);
+          progressText.textContent = '完了！';
+          setTimeout(() => {
+            progressBar.classList.remove('visible');
+            progressText.classList.remove('visible');
+            progressFill.style.width = '0%';
+          }, 2000);
+        });
+
+        gif.render();
+      } catch (err) {
+        progressText.textContent = 'GIF生成でエラーが発生しました: ' + err.message;
+        console.error(err);
+      }
+    });
+
+    // ============================================
+    // gif.js の読み込み（workerのインラインBlob化）
+    // ============================================
+    let gifWorkerUrl = '';
+    (async function loadGifJs() {
+      // gif.js 本体
+      const gifScript = document.createElement('script');
+      gifScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+      document.head.appendChild(gifScript);
+
+      // gif.worker.js をfetchしてBlob URLに変換（CORS対策）
+      try {
+        const workerResp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
+        const workerText = await workerResp.text();
+        const workerBlob = new Blob([workerText], { type: 'application/javascript' });
+        gifWorkerUrl = URL.createObjectURL(workerBlob);
+      } catch (e) {
+        console.warn('gif.js worker の読み込みに失敗:', e);
+      }
+    })();
+
+    // ============================================
+    // ページ並び替え → ダウンロード
+    // ============================================
+    $('applyReorder').addEventListener('click', async () => {
+      if (!state.pdfBytes || state.reorderPages.length === 0) return;
+
+      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+      const newDoc = await PDFLib.PDFDocument.create();
+
+      for (const pageNum of state.reorderPages) {
+        const [copied] = await newDoc.copyPages(srcDoc, [pageNum - 1]);
+        newDoc.addPage(copied);
+      }
+
+      // 元のメタデータをコピー
+      const title = srcDoc.getTitle();
+      if (title) newDoc.setTitle(title);
+
+      const pdfBytesOut = await newDoc.save();
+      const baseName = state.fileName.replace(/\.pdf$/i, '');
+      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_reordered.pdf`);
+    });
+
+    // ============================================
+    // ページ削除 → ダウンロード
+    // ============================================
+    $('applyDelete').addEventListener('click', async () => {
+      if (!state.pdfBytes || state.deletePages.size === 0) return;
+
+      if (state.deletePages.size >= state.pageCount) {
+        alert('すべてのページを削除することはできません。');
+        return;
+      }
+
+      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+      const newDoc = await PDFLib.PDFDocument.create();
+
+      for (let i = 1; i <= state.pageCount; i++) {
+        if (!state.deletePages.has(i)) {
+          const [copied] = await newDoc.copyPages(srcDoc, [i - 1]);
+          newDoc.addPage(copied);
+        }
+      }
+
+      const title = srcDoc.getTitle();
+      if (title) newDoc.setTitle(title);
+
+      const pdfBytesOut = await newDoc.save();
+      const baseName = state.fileName.replace(/\.pdf$/i, '');
+      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_deleted.pdf`);
+    });
+
+    // ============================================
+    // 空白ページ追加
+    // ============================================
+    function updateBlankPositionOptions() {
+      const select = $('blankPosition');
+      select.innerHTML = '<option value="start">先頭</option>';
+      for (let i = 1; i <= state.pageCount; i++) {
+        select.innerHTML += `<option value="${i}">${i}ページの後</option>`;
+      }
+      select.innerHTML += '<option value="end" selected>末尾</option>';
+    }
+
+    $('addBlank').addEventListener('click', async () => {
+      if (!state.pdfBytes) return;
+
+      const position = $('blankPosition').value;
+      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+
+      // 既存ページのサイズを参考にする
+      const firstPage = srcDoc.getPage(0);
+      const { width, height } = firstPage.getSize();
+
+      if (position === 'start') {
+        const blankPage = srcDoc.insertPage(0, [width, height]);
+      } else if (position === 'end') {
+        srcDoc.addPage([width, height]);
+      } else {
+        const idx = parseInt(position);
+        srcDoc.insertPage(idx, [width, height]);
+      }
+
+      const pdfBytesOut = await srcDoc.save();
+      const baseName = state.fileName.replace(/\.pdf$/i, '');
+      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_blank_added.pdf`);
+    });
+
+    // ============================================
+    // タイトル編集 → ダウンロード
+    // ============================================
+    $('applyTitle').addEventListener('click', async () => {
+      if (!state.pdfBytes) return;
+
+      const newTitle = $('newTitle').value;
+      const doc = await PDFLib.PDFDocument.load(state.pdfBytes);
+      doc.setTitle(newTitle);
+
+      const pdfBytesOut = await doc.save();
+      const baseName = state.fileName.replace(/\.pdf$/i, '');
+      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_titled.pdf`);
+    });
+  </script>
+</body>
+</html>
