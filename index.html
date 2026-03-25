@@ -475,12 +475,12 @@
     // アプリケーション状態
     // ============================================
     const state = {
-      pdfBytes: null,      // 元のPDFのArrayBuffer
-      pdfLib: null,        // pdf-lib の PDFDocument
-      pdfJs: null,         // pdfjs-dist の PDFDocumentProxy
+      pdfBytes: null,         // 現在のPDF（Uint8Array）
+      pdfLib: null,           // pdf-lib の PDFDocument
+      pdfJs: null,            // pdfjs-dist の PDFDocumentProxy
       pageCount: 0,
       fileName: '',
-      reorderPages: [],    // ページ並び替え用の順序配列
+      reorderPages: [],       // ページ並び替え用の順序配列
       deletePages: new Set(), // 削除選択されたページ番号
     };
 
@@ -494,38 +494,86 @@
     const cards = document.querySelectorAll('.bento-card');
 
     // ============================================
+    // gif.js の読み込み（Promise管理で競合を防止）
+    // ============================================
+    let gifReady = null;
+    let gifWorkerUrl = '';
+
+    function loadGifJs() {
+      if (gifReady) return gifReady;
+      gifReady = new Promise((resolve, reject) => {
+        const gifScript = document.createElement('script');
+        gifScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
+        gifScript.onload = async () => {
+          try {
+            const workerResp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
+            const workerText = await workerResp.text();
+            const workerBlob = new Blob([workerText], { type: 'application/javascript' });
+            gifWorkerUrl = URL.createObjectURL(workerBlob);
+            resolve();
+          } catch (e) {
+            reject(new Error('gif.js worker の読み込みに失敗しました: ' + e.message));
+          }
+        };
+        gifScript.onerror = () => reject(new Error('gif.js の読み込みに失敗しました'));
+        document.head.appendChild(gifScript);
+      });
+      return gifReady;
+    }
+
+    // バックグラウンドで先読みを開始
+    loadGifJs().catch(e => console.warn(e));
+
+    // ============================================
     // PDF読み込み
     // ============================================
     async function loadPdf(file) {
-      state.fileName = file.name;
-      state.pdfBytes = await file.arrayBuffer();
+      try {
+        state.fileName = file.name;
+        state.pdfBytes = new Uint8Array(await file.arrayBuffer());
 
-      // pdf-lib で読み込み（操作用）
-      state.pdfLib = await PDFLib.PDFDocument.load(state.pdfBytes);
+        state.pdfLib = await PDFLib.PDFDocument.load(state.pdfBytes);
+        state.pageCount = state.pdfLib.getPageCount();
+
+        const loadingTask = pdfjsLib.getDocument({ data: state.pdfBytes.slice(0) });
+        state.pdfJs = await loadingTask.promise;
+
+        $('fileName').textContent = file.name;
+        $('filePages').textContent = `${state.pageCount} ページ`;
+        fileInfo.classList.add('visible');
+        dropZone.style.display = 'none';
+
+        cards.forEach(card => card.classList.remove('disabled'));
+
+        const title = state.pdfLib.getTitle() || '';
+        $('currentTitle').value = title;
+        $('newTitle').value = title;
+
+        updateBlankPositionOptions();
+        await renderThumbnails();
+      } catch (err) {
+        alert('PDFの読み込みに失敗しました。ファイルが壊れているか、パスワードが設定されている可能性があります。\n詳細: ' + err.message);
+        console.error(err);
+      }
+    }
+
+    // ============================================
+    // PDF状態を新しいバイト列から更新（操作後の画面同期用）
+    // ============================================
+    async function reloadPdfFromBytes(newPdfBytes) {
+      state.pdfBytes = newPdfBytes;
+      state.pdfLib = await PDFLib.PDFDocument.load(newPdfBytes);
       state.pageCount = state.pdfLib.getPageCount();
 
-      // pdfjs-dist で読み込み（レンダリング用）
-      const loadingTask = pdfjsLib.getDocument({ data: state.pdfBytes.slice(0) });
+      if (state.pdfJs) await state.pdfJs.destroy();
+      const loadingTask = pdfjsLib.getDocument({ data: newPdfBytes.slice(0) });
       state.pdfJs = await loadingTask.promise;
 
-      // UI更新
-      $('fileName').textContent = file.name;
       $('filePages').textContent = `${state.pageCount} ページ`;
-      fileInfo.classList.add('visible');
-      dropZone.style.display = 'none';
-
-      // カードを有効化
-      cards.forEach(card => card.classList.remove('disabled'));
-
-      // タイトル表示
       const title = state.pdfLib.getTitle() || '';
       $('currentTitle').value = title;
-      $('newTitle').value = title;
 
-      // 空白ページ挿入位置のドロップダウンを更新
       updateBlankPositionOptions();
-
-      // サムネイル生成
       await renderThumbnails();
     }
 
@@ -551,7 +599,8 @@
     });
 
     // クリアボタン
-    $('clearFile').addEventListener('click', () => {
+    $('clearFile').addEventListener('click', async () => {
+      if (state.pdfJs) await state.pdfJs.destroy();
       state.pdfBytes = null;
       state.pdfLib = null;
       state.pdfJs = null;
@@ -595,10 +644,12 @@
       for (let i = 1; i <= state.pageCount; i++) {
         const canvas = await renderPageToCanvas(i, 150);
 
-        // 並び替え用サムネイル
-        const reorderItem = createThumbnailItem(canvas.cloneNode(false), i, 'reorder');
-        const reorderCtx = reorderItem.querySelector('canvas').getContext('2d');
-        reorderCtx.drawImage(canvas, 0, 0);
+        // 並び替え用サムネイル（正しいサイズで新規キャンバスに複製）
+        const reorderCanvas = document.createElement('canvas');
+        reorderCanvas.width = canvas.width;
+        reorderCanvas.height = canvas.height;
+        reorderCanvas.getContext('2d').drawImage(canvas, 0, 0);
+        const reorderItem = createThumbnailItem(reorderCanvas, i, 'reorder');
         reorderGrid.appendChild(reorderItem);
 
         // 削除用サムネイル
@@ -643,6 +694,7 @@
     function setupDragAndDrop() {
       const grid = $('reorderGrid');
       let draggedItem = null;
+      let currentDragOver = null; // 現在ハイライト中の要素を保持（全走査を回避）
 
       grid.addEventListener('dragstart', (e) => {
         draggedItem = e.target.closest('.thumbnail-item');
@@ -657,8 +709,10 @@
           draggedItem.classList.remove('dragging');
           draggedItem = null;
         }
-        grid.querySelectorAll('.thumbnail-item').forEach(el => el.classList.remove('drag-over-item'));
-        // 順序配列を更新
+        if (currentDragOver) {
+          currentDragOver.classList.remove('drag-over-item');
+          currentDragOver = null;
+        }
         state.reorderPages = Array.from(grid.querySelectorAll('.thumbnail-item')).map(el => parseInt(el.dataset.page));
       });
 
@@ -666,8 +720,9 @@
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         const target = e.target.closest('.thumbnail-item');
-        if (target && target !== draggedItem) {
-          grid.querySelectorAll('.thumbnail-item').forEach(el => el.classList.remove('drag-over-item'));
+        if (target && target !== draggedItem && target !== currentDragOver) {
+          if (currentDragOver) currentDragOver.classList.remove('drag-over-item');
+          currentDragOver = target;
           target.classList.add('drag-over-item');
         }
       });
@@ -694,6 +749,9 @@
     $('convertImage').addEventListener('click', async () => {
       if (!state.pdfJs) return;
 
+      const btn = $('convertImage');
+      btn.disabled = true;
+
       const format = $('imageFormat').value;
       const dpi = parseInt($('imageDpi').value);
       const scale = dpi / 72;
@@ -706,35 +764,42 @@
       progressBar.classList.add('visible');
       progressText.classList.add('visible');
 
-      const zip = new JSZip();
+      try {
+        const zip = new JSZip();
 
-      for (let i = 1; i <= state.pageCount; i++) {
-        progressText.textContent = `${i} / ${state.pageCount} ページを変換中...`;
-        progressFill.style.width = `${(i / state.pageCount) * 100}%`;
+        for (let i = 1; i <= state.pageCount; i++) {
+          progressText.textContent = `${i} / ${state.pageCount} ページを変換中...`;
+          progressFill.style.width = `${(i / state.pageCount) * 100}%`;
 
-        const page = await state.pdfJs.getPage(i);
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
+          const page = await state.pdfJs.getPage(i);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
 
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, 0.92));
-        zip.file(`page-${String(i).padStart(3, '0')}.${ext}`, blob);
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, 0.92));
+          zip.file(`page-${String(i).padStart(3, '0')}.${ext}`, blob);
+        }
+
+        progressText.textContent = 'ZIPを作成中...';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+        saveAs(zipBlob, `${baseName}_${format}_${dpi}dpi.zip`);
+
+        progressText.textContent = '完了！';
+      } catch (err) {
+        progressText.textContent = 'エラーが発生しました: ' + err.message;
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => {
+          progressBar.classList.remove('visible');
+          progressText.classList.remove('visible');
+          progressFill.style.width = '0%';
+        }, 2000);
       }
-
-      progressText.textContent = 'ZIPを作成中...';
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const baseName = state.fileName.replace(/\.pdf$/i, '');
-      saveAs(zipBlob, `${baseName}_${format}_${dpi}dpi.zip`);
-
-      progressText.textContent = '完了！';
-      setTimeout(() => {
-        progressBar.classList.remove('visible');
-        progressText.classList.remove('visible');
-        progressFill.style.width = '0%';
-      }, 2000);
     });
 
     // ============================================
@@ -742,6 +807,9 @@
     // ============================================
     $('convertGif').addEventListener('click', async () => {
       if (!state.pdfJs) return;
+
+      const btn = $('convertGif');
+      btn.disabled = true;
 
       const delay = parseFloat($('gifDelay').value) * 1000;
       const progressBar = $('gifProgress');
@@ -754,33 +822,35 @@
         if (!confirm('50ページ以上のPDFをGIFに変換すると時間がかかる場合があります。続行しますか？')) {
           progressBar.classList.remove('visible');
           progressText.classList.remove('visible');
+          btn.disabled = false;
           return;
         }
       }
 
-      // gif.js を動的に読み込み（Web Worker 問題を回避するためインラインで処理）
-      progressText.textContent = 'フレームを作成中...';
-      const frames = [];
-      for (let i = 1; i <= state.pageCount; i++) {
-        progressText.textContent = `${i} / ${state.pageCount} ページをレンダリング中...`;
-        progressFill.style.width = `${(i / state.pageCount) * 80}%`;
-
-        const page = await state.pdfJs.getPage(i);
-        const viewport = page.getViewport({ scale: 1.5 });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        frames.push({ canvas, delay });
-      }
-
-      progressText.textContent = 'GIFを生成中...';
-      progressFill.style.width = '85%';
-
-      // GIF をマニュアルでエンコード（gif.js の代わりに軽量な方法）
-      // ここでは各フレームをCanvasからBlobにしてgif.jsを使う
       try {
+        // gif.js の読み込みを確実に完了させてから処理開始
+        progressText.textContent = 'gif.js を読み込み中...';
+        await loadGifJs();
+
+        progressText.textContent = 'フレームを作成中...';
+        const frames = [];
+        for (let i = 1; i <= state.pageCount; i++) {
+          progressText.textContent = `${i} / ${state.pageCount} ページをレンダリング中...`;
+          progressFill.style.width = `${(i / state.pageCount) * 80}%`;
+
+          const page = await state.pdfJs.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          frames.push({ canvas, delay });
+        }
+
+        progressText.textContent = 'GIFを生成中...';
+        progressFill.style.width = '85%';
+
         const gif = new GIF({
           workers: 2,
           quality: 10,
@@ -798,9 +868,11 @@
         });
 
         gif.on('finished', (blob) => {
+          frames.length = 0; // フレームのキャンバスをメモリ解放
           const baseName = state.fileName.replace(/\.pdf$/i, '');
           saveAs(blob, `${baseName}.gif`);
           progressText.textContent = '完了！';
+          btn.disabled = false;
           setTimeout(() => {
             progressBar.classList.remove('visible');
             progressText.classList.remove('visible');
@@ -808,33 +880,22 @@
           }, 2000);
         });
 
+        gif.on('error', (err) => {
+          frames.length = 0;
+          progressText.textContent = 'GIF生成でエラーが発生しました';
+          progressBar.classList.remove('visible');
+          btn.disabled = false;
+          console.error('gif.js error:', err);
+        });
+
         gif.render();
       } catch (err) {
         progressText.textContent = 'GIF生成でエラーが発生しました: ' + err.message;
+        progressBar.classList.remove('visible');
+        btn.disabled = false;
         console.error(err);
       }
     });
-
-    // ============================================
-    // gif.js の読み込み（workerのインラインBlob化）
-    // ============================================
-    let gifWorkerUrl = '';
-    (async function loadGifJs() {
-      // gif.js 本体
-      const gifScript = document.createElement('script');
-      gifScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js';
-      document.head.appendChild(gifScript);
-
-      // gif.worker.js をfetchしてBlob URLに変換（CORS対策）
-      try {
-        const workerResp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
-        const workerText = await workerResp.text();
-        const workerBlob = new Blob([workerText], { type: 'application/javascript' });
-        gifWorkerUrl = URL.createObjectURL(workerBlob);
-      } catch (e) {
-        console.warn('gif.js worker の読み込みに失敗:', e);
-      }
-    })();
 
     // ============================================
     // ページ並び替え → ダウンロード
@@ -842,21 +903,32 @@
     $('applyReorder').addEventListener('click', async () => {
       if (!state.pdfBytes || state.reorderPages.length === 0) return;
 
-      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
-      const newDoc = await PDFLib.PDFDocument.create();
+      const btn = $('applyReorder');
+      btn.disabled = true;
 
-      for (const pageNum of state.reorderPages) {
-        const [copied] = await newDoc.copyPages(srcDoc, [pageNum - 1]);
-        newDoc.addPage(copied);
+      try {
+        const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+        const newDoc = await PDFLib.PDFDocument.create();
+
+        for (const pageNum of state.reorderPages) {
+          const [copied] = await newDoc.copyPages(srcDoc, [pageNum - 1]);
+          newDoc.addPage(copied);
+        }
+
+        const title = srcDoc.getTitle();
+        if (title) newDoc.setTitle(title);
+
+        const pdfBytesOut = await newDoc.save();
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+        saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_reordered.pdf`);
+
+        await reloadPdfFromBytes(pdfBytesOut);
+      } catch (err) {
+        alert('並び替えに失敗しました: ' + err.message);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
       }
-
-      // 元のメタデータをコピー
-      const title = srcDoc.getTitle();
-      if (title) newDoc.setTitle(title);
-
-      const pdfBytesOut = await newDoc.save();
-      const baseName = state.fileName.replace(/\.pdf$/i, '');
-      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_reordered.pdf`);
     });
 
     // ============================================
@@ -870,22 +942,34 @@
         return;
       }
 
-      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
-      const newDoc = await PDFLib.PDFDocument.create();
+      const btn = $('applyDelete');
+      btn.disabled = true;
 
-      for (let i = 1; i <= state.pageCount; i++) {
-        if (!state.deletePages.has(i)) {
-          const [copied] = await newDoc.copyPages(srcDoc, [i - 1]);
-          newDoc.addPage(copied);
+      try {
+        const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+        const newDoc = await PDFLib.PDFDocument.create();
+
+        for (let i = 1; i <= state.pageCount; i++) {
+          if (!state.deletePages.has(i)) {
+            const [copied] = await newDoc.copyPages(srcDoc, [i - 1]);
+            newDoc.addPage(copied);
+          }
         }
+
+        const title = srcDoc.getTitle();
+        if (title) newDoc.setTitle(title);
+
+        const pdfBytesOut = await newDoc.save();
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+        saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_deleted.pdf`);
+
+        await reloadPdfFromBytes(pdfBytesOut);
+      } catch (err) {
+        alert('ページ削除に失敗しました: ' + err.message);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
       }
-
-      const title = srcDoc.getTitle();
-      if (title) newDoc.setTitle(title);
-
-      const pdfBytesOut = await newDoc.save();
-      const baseName = state.fileName.replace(/\.pdf$/i, '');
-      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_deleted.pdf`);
     });
 
     // ============================================
@@ -893,35 +977,63 @@
     // ============================================
     function updateBlankPositionOptions() {
       const select = $('blankPosition');
-      select.innerHTML = '<option value="start">先頭</option>';
+      const frag = document.createDocumentFragment();
+
+      const startOpt = document.createElement('option');
+      startOpt.value = 'start';
+      startOpt.textContent = '先頭';
+      frag.appendChild(startOpt);
+
       for (let i = 1; i <= state.pageCount; i++) {
-        select.innerHTML += `<option value="${i}">${i}ページの後</option>`;
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = `${i}ページの後`;
+        frag.appendChild(opt);
       }
-      select.innerHTML += '<option value="end" selected>末尾</option>';
+
+      const endOpt = document.createElement('option');
+      endOpt.value = 'end';
+      endOpt.textContent = '末尾';
+      endOpt.selected = true;
+      frag.appendChild(endOpt);
+
+      select.innerHTML = '';
+      select.appendChild(frag);
     }
 
     $('addBlank').addEventListener('click', async () => {
       if (!state.pdfBytes) return;
 
-      const position = $('blankPosition').value;
-      const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+      const btn = $('addBlank');
+      btn.disabled = true;
 
-      // 既存ページのサイズを参考にする
-      const firstPage = srcDoc.getPage(0);
-      const { width, height } = firstPage.getSize();
+      try {
+        const position = $('blankPosition').value;
+        const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
 
-      if (position === 'start') {
-        const blankPage = srcDoc.insertPage(0, [width, height]);
-      } else if (position === 'end') {
-        srcDoc.addPage([width, height]);
-      } else {
-        const idx = parseInt(position);
-        srcDoc.insertPage(idx, [width, height]);
+        const firstPage = srcDoc.getPage(0);
+        const { width, height } = firstPage.getSize();
+
+        if (position === 'start') {
+          srcDoc.insertPage(0, [width, height]);
+        } else if (position === 'end') {
+          srcDoc.addPage([width, height]);
+        } else {
+          const idx = parseInt(position);
+          srcDoc.insertPage(idx, [width, height]);
+        }
+
+        const pdfBytesOut = await srcDoc.save();
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+        saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_blank_added.pdf`);
+
+        await reloadPdfFromBytes(pdfBytesOut);
+      } catch (err) {
+        alert('空白ページ追加に失敗しました: ' + err.message);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
       }
-
-      const pdfBytesOut = await srcDoc.save();
-      const baseName = state.fileName.replace(/\.pdf$/i, '');
-      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_blank_added.pdf`);
     });
 
     // ============================================
@@ -930,13 +1042,28 @@
     $('applyTitle').addEventListener('click', async () => {
       if (!state.pdfBytes) return;
 
-      const newTitle = $('newTitle').value;
-      const doc = await PDFLib.PDFDocument.load(state.pdfBytes);
-      doc.setTitle(newTitle);
+      const btn = $('applyTitle');
+      btn.disabled = true;
 
-      const pdfBytesOut = await doc.save();
-      const baseName = state.fileName.replace(/\.pdf$/i, '');
-      saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_titled.pdf`);
+      try {
+        const newTitle = $('newTitle').value;
+        const doc = await PDFLib.PDFDocument.load(state.pdfBytes);
+        doc.setTitle(newTitle);
+
+        const pdfBytesOut = await doc.save();
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+        saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), `${baseName}_titled.pdf`);
+
+        // 状態を更新（サムネイルの再描画は不要）
+        state.pdfBytes = pdfBytesOut;
+        state.pdfLib = doc;
+        $('currentTitle').value = newTitle;
+      } catch (err) {
+        alert('タイトル編集に失敗しました: ' + err.message);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+      }
     });
   </script>
 </body>
