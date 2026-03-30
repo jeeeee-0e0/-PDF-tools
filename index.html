@@ -148,11 +148,14 @@
       grid-template-areas:
         "image   gif     reorder reorder"
         "delete  blank   reorder reorder"
+        "split   split   merge   merge"
         "title   title   title   title";
     }
     .card-image    { grid-area: image; }
     .card-gif      { grid-area: gif; }
     .card-reorder  { grid-area: reorder; }
+    .card-split    { grid-area: split; }
+    .card-merge    { grid-area: merge; }
     .card-delete   { grid-area: delete; }
     .card-blank    { grid-area: blank; }
     .card-title    { grid-area: title; }
@@ -254,11 +257,11 @@
        ============================================ */
     .thumbnail-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
       gap: 8px;
       flex: 1;
       overflow-y: auto;
-      max-height: 320px;
+      max-height: 480px;
       padding: 4px;
     }
     .thumbnail-item {
@@ -286,12 +289,42 @@
       transform: translateX(-50%);
       background: rgba(0,0,0,0.6);
       color: #fff;
-      font-size: 11px;
-      padding: 1px 6px;
+      font-size: 13px;
+      padding: 2px 8px;
       border-radius: 4px;
+      font-weight: 600;
+      z-index: 3;
     }
     .thumbnail-item.selected {
       border-color: #ef4444;
+      border-width: 3px;
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3);
+      background: #fef2f2;
+    }
+    .thumbnail-item.selected::after {
+      content: '✓';
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 24px;
+      height: 24px;
+      background: #ef4444;
+      color: #fff;
+      border-radius: 50%;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+    .thumbnail-item.selected::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(239, 68, 68, 0.08);
+      z-index: 1;
+      pointer-events: none;
     }
     .thumbnail-item.dragging {
       opacity: 0.5;
@@ -299,6 +332,97 @@
     .thumbnail-item.drag-over-item {
       border-color: #6366f1;
       border-style: dashed;
+    }
+
+    /* ============================================
+       Split & Merge
+       ============================================ */
+    .split-hint {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+    .split-preview {
+      font-size: 12px;
+      color: #374151;
+      background: #f9fafb;
+      border-radius: 6px;
+      padding: 8px;
+      margin-bottom: 12px;
+      display: none;
+    }
+    .split-preview.visible { display: block; }
+    .split-preview .split-part {
+      padding: 2px 0;
+    }
+    .merge-drop-zone {
+      border: 2px dashed #d1d5db;
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 8px;
+    }
+    .merge-drop-zone:hover, .merge-drop-zone.drag-over {
+      border-color: #6366f1;
+      background: #eef2ff;
+    }
+    .merge-file-list {
+      max-height: 200px;
+      overflow-y: auto;
+      margin-bottom: 8px;
+    }
+    .merge-file-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      font-size: 13px;
+      cursor: grab;
+    }
+    .merge-file-item.dragging { opacity: 0.5; }
+    .merge-file-item.drag-over-item { border-color: #6366f1; border-style: dashed; }
+    .merge-file-item .merge-drag-handle { color: #9ca3af; cursor: grab; }
+    .merge-file-item .merge-file-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .merge-file-item .merge-file-pages {
+      font-size: 11px;
+      color: #6b7280;
+      white-space: nowrap;
+    }
+    .merge-file-item .merge-remove {
+      background: none;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .merge-file-item .merge-remove:hover { color: #ef4444; }
+
+    /* ============================================
+       Delete Selection Info
+       ============================================ */
+    .delete-selection-info {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #dc2626;
+      margin-bottom: 8px;
+      text-align: center;
     }
 
     /* ============================================
@@ -334,6 +458,7 @@
         grid-template-areas:
           "image   gif"
           "reorder reorder"
+          "split   merge"
           "delete  blank"
           "title   title";
       }
@@ -346,6 +471,8 @@
           "image"
           "gif"
           "reorder"
+          "split"
+          "merge"
           "delete"
           "blank"
           "title";
@@ -425,10 +552,47 @@
       <button class="btn btn-primary" id="applyReorder" style="margin-top:12px;">並び替えを適用してダウンロード</button>
     </div>
 
+    <!-- PDF分割 -->
+    <div class="bento-card card-split disabled" id="cardSplit">
+      <h2>PDF分割</h2>
+      <p class="card-desc">指定位置でPDFを分割</p>
+      <div class="form-group">
+        <label>分割位置（ページ番号をカンマ区切り）</label>
+        <input type="text" id="splitPoints" placeholder="例: 3, 7, 15">
+        <div class="split-hint">3, 7 → 1-3 / 4-7 / 8-末尾 の3ファイルに分割</div>
+      </div>
+      <div class="split-preview" id="splitPreview"></div>
+      <button class="btn btn-primary" id="applySplit" disabled>分割してダウンロード (ZIP)</button>
+      <div class="progress-bar" id="splitProgress"><div class="progress-bar-fill" id="splitProgressFill"></div></div>
+      <div class="progress-text" id="splitProgressText"></div>
+    </div>
+
+    <!-- PDF結合 -->
+    <div class="bento-card card-merge" id="cardMerge">
+      <h2>PDF結合</h2>
+      <p class="card-desc">複数のPDFを1つに結合</p>
+      <div class="merge-drop-zone" id="mergeDropZone">
+        <span style="font-size:24px;">📎</span>
+        <div style="font-size:13px;color:#6b7280;">PDFファイルをドロップ<br>またはクリックして選択</div>
+        <input type="file" id="mergeFileInput" accept=".pdf" multiple hidden>
+      </div>
+      <div class="merge-file-list" id="mergeFileList"></div>
+      <button class="btn btn-primary" id="applyMerge" disabled>結合してダウンロード</button>
+      <div class="progress-bar" id="mergeProgress"><div class="progress-bar-fill" id="mergeProgressFill"></div></div>
+      <div class="progress-text" id="mergeProgressText"></div>
+    </div>
+
     <!-- ページ削除 -->
     <div class="bento-card card-delete disabled" id="cardDelete">
       <h2>ページ削除</h2>
       <p class="card-desc">不要なページを選んで削除</p>
+      <div class="delete-selection-info" id="deleteSelectionInfo" style="display:none;">
+        <span id="deleteCount">0</span> ページ選択中
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;">
+        <button class="btn btn-secondary" id="deleteSelectAll" style="padding:4px 10px;font-size:12px;">全選択</button>
+        <button class="btn btn-secondary" id="deleteClearAll" style="padding:4px 10px;font-size:12px;">全解除</button>
+      </div>
       <div class="thumbnail-grid" id="deleteGrid"></div>
       <button class="btn btn-danger" id="applyDelete" style="margin-top:12px;">選択ページを削除</button>
     </div>
@@ -482,6 +646,7 @@
       fileName: '',
       reorderPages: [],       // ページ並び替え用の順序配列
       deletePages: new Set(), // 削除選択されたページ番号
+      mergeFiles: [],         // 結合用 { name, bytes, pageCount }[]
     };
 
     // ============================================
@@ -543,7 +708,9 @@
         fileInfo.classList.add('visible');
         dropZone.style.display = 'none';
 
-        cards.forEach(card => card.classList.remove('disabled'));
+        cards.forEach(card => {
+          if (card.id !== 'cardMerge') card.classList.remove('disabled');
+        });
 
         const title = state.pdfLib.getTitle() || '';
         $('currentTitle').value = title;
@@ -610,7 +777,9 @@
       state.deletePages.clear();
       fileInfo.classList.remove('visible');
       dropZone.style.display = '';
-      cards.forEach(card => card.classList.add('disabled'));
+      cards.forEach(card => {
+        if (card.id !== 'cardMerge') card.classList.add('disabled');
+      });
       $('reorderGrid').innerHTML = '';
       $('deleteGrid').innerHTML = '';
       $('currentTitle').value = '';
@@ -683,9 +852,21 @@
             state.deletePages.add(pageNum);
             item.classList.add('selected');
           }
+          updateDeleteCount();
         });
       }
       return item;
+    }
+
+    function updateDeleteCount() {
+      const info = $('deleteSelectionInfo');
+      const count = $('deleteCount');
+      if (state.deletePages.size > 0) {
+        info.style.display = 'block';
+        count.textContent = state.deletePages.size;
+      } else {
+        info.style.display = 'none';
+      }
     }
 
     // ============================================
@@ -742,6 +923,26 @@
         }
       });
     }
+
+    // ============================================
+    // 削除: 全選択 / 全解除
+    // ============================================
+    $('deleteSelectAll').addEventListener('click', () => {
+      const items = $('deleteGrid').querySelectorAll('.thumbnail-item');
+      items.forEach(item => {
+        const pageNum = parseInt(item.dataset.page);
+        state.deletePages.add(pageNum);
+        item.classList.add('selected');
+      });
+      updateDeleteCount();
+    });
+
+    $('deleteClearAll').addEventListener('click', () => {
+      const items = $('deleteGrid').querySelectorAll('.thumbnail-item');
+      items.forEach(item => item.classList.remove('selected'));
+      state.deletePages.clear();
+      updateDeleteCount();
+    });
 
     // ============================================
     // PDF → 画像変換
@@ -1063,6 +1264,271 @@
         console.error(err);
       } finally {
         btn.disabled = false;
+      }
+    });
+    // ============================================
+    // PDF分割
+    // ============================================
+    const splitPointsInput = $('splitPoints');
+    const splitPreview = $('splitPreview');
+    const applySplitBtn = $('applySplit');
+
+    function parseSplitPoints() {
+      const text = splitPointsInput.value.trim();
+      if (!text) return [];
+      const points = text.split(/[,、\s]+/)
+        .map(s => parseInt(s.trim()))
+        .filter(n => !isNaN(n) && n >= 1 && n < state.pageCount);
+      return [...new Set(points)].sort((a, b) => a - b);
+    }
+
+    function updateSplitPreview() {
+      const points = parseSplitPoints();
+      if (points.length === 0 || !state.pageCount) {
+        splitPreview.classList.remove('visible');
+        applySplitBtn.disabled = true;
+        return;
+      }
+
+      const ranges = [];
+      let start = 1;
+      for (const p of points) {
+        ranges.push({ start, end: p });
+        start = p + 1;
+      }
+      ranges.push({ start, end: state.pageCount });
+
+      splitPreview.innerHTML = ranges.map((r, i) =>
+        `<div class="split-part">ファイル${i + 1}: ${r.start}〜${r.end}ページ（${r.end - r.start + 1}ページ）</div>`
+      ).join('');
+      splitPreview.classList.add('visible');
+      applySplitBtn.disabled = false;
+    }
+
+    splitPointsInput.addEventListener('input', updateSplitPreview);
+
+    applySplitBtn.addEventListener('click', async () => {
+      if (!state.pdfBytes) return;
+      const points = parseSplitPoints();
+      if (points.length === 0) return;
+
+      const btn = applySplitBtn;
+      btn.disabled = true;
+      const progressBar = $('splitProgress');
+      const progressFill = $('splitProgressFill');
+      const progressText = $('splitProgressText');
+      progressBar.classList.add('visible');
+      progressText.classList.add('visible');
+
+      try {
+        const ranges = [];
+        let start = 1;
+        for (const p of points) {
+          ranges.push({ start, end: p });
+          start = p + 1;
+        }
+        ranges.push({ start, end: state.pageCount });
+
+        const zip = new JSZip();
+        const baseName = state.fileName.replace(/\.pdf$/i, '');
+
+        for (let i = 0; i < ranges.length; i++) {
+          progressText.textContent = `${i + 1} / ${ranges.length} ファイルを作成中...`;
+          progressFill.style.width = `${((i + 1) / ranges.length) * 100}%`;
+
+          const srcDoc = await PDFLib.PDFDocument.load(state.pdfBytes);
+          const newDoc = await PDFLib.PDFDocument.create();
+          const title = srcDoc.getTitle();
+          if (title) newDoc.setTitle(title);
+
+          for (let p = ranges[i].start; p <= ranges[i].end; p++) {
+            const [copied] = await newDoc.copyPages(srcDoc, [p - 1]);
+            newDoc.addPage(copied);
+          }
+
+          const pdfBytesOut = await newDoc.save();
+          zip.file(`${baseName}_part${i + 1}.pdf`, pdfBytesOut);
+        }
+
+        progressText.textContent = 'ZIPを作成中...';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        saveAs(zipBlob, `${baseName}_split.zip`);
+        progressText.textContent = '完了！';
+      } catch (err) {
+        progressText.textContent = 'エラー: ' + err.message;
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => {
+          progressBar.classList.remove('visible');
+          progressText.classList.remove('visible');
+          progressFill.style.width = '0%';
+        }, 2000);
+      }
+    });
+
+    // ============================================
+    // PDF結合
+    // ============================================
+    const mergeDropZone = $('mergeDropZone');
+    const mergeFileInput = $('mergeFileInput');
+    const mergeFileList = $('mergeFileList');
+    const applyMergeBtn = $('applyMerge');
+
+    mergeDropZone.addEventListener('click', () => mergeFileInput.click());
+    mergeFileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) addMergeFiles(Array.from(e.target.files));
+      mergeFileInput.value = '';
+    });
+    mergeDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      mergeDropZone.classList.add('drag-over');
+    });
+    mergeDropZone.addEventListener('dragleave', () => {
+      mergeDropZone.classList.remove('drag-over');
+    });
+    mergeDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      mergeDropZone.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
+      if (files.length > 0) addMergeFiles(files);
+    });
+
+    async function addMergeFiles(files) {
+      for (const file of files) {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const doc = await PDFLib.PDFDocument.load(bytes);
+          state.mergeFiles.push({
+            name: file.name,
+            bytes,
+            pageCount: doc.getPageCount(),
+          });
+        } catch (err) {
+          alert(`${file.name} の読み込みに失敗しました: ${err.message}`);
+        }
+      }
+      renderMergeFileList();
+    }
+
+    function renderMergeFileList() {
+      mergeFileList.innerHTML = '';
+      state.mergeFiles.forEach((file, idx) => {
+        const item = document.createElement('div');
+        item.classList.add('merge-file-item');
+        item.draggable = true;
+        item.dataset.idx = idx;
+        item.innerHTML = `
+          <span class="merge-drag-handle">☰</span>
+          <span class="merge-file-name" title="${file.name}">${file.name}</span>
+          <span class="merge-file-pages">${file.pageCount}p</span>
+          <button class="merge-remove" data-idx="${idx}">×</button>
+        `;
+        mergeFileList.appendChild(item);
+      });
+
+      applyMergeBtn.disabled = state.mergeFiles.length < 2;
+      setupMergeDragAndDrop();
+    }
+
+    // 結合リストの削除ボタン
+    mergeFileList.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('.merge-remove');
+      if (removeBtn) {
+        const idx = parseInt(removeBtn.dataset.idx);
+        state.mergeFiles.splice(idx, 1);
+        renderMergeFileList();
+      }
+    });
+
+    // 結合リストのドラッグ&ドロップ
+    function setupMergeDragAndDrop() {
+      let draggedItem = null;
+      let currentDragOver = null;
+
+      mergeFileList.querySelectorAll('.merge-file-item').forEach(item => {
+        item.addEventListener('dragstart', (e) => {
+          draggedItem = item;
+          item.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+        });
+
+        item.addEventListener('dragend', () => {
+          if (draggedItem) draggedItem.classList.remove('dragging');
+          if (currentDragOver) currentDragOver.classList.remove('drag-over-item');
+          draggedItem = null;
+          currentDragOver = null;
+          // DOM順序からstate.mergeFilesを再構築
+          const newOrder = Array.from(mergeFileList.querySelectorAll('.merge-file-item'))
+            .map(el => parseInt(el.dataset.idx));
+          const reordered = newOrder.map(i => state.mergeFiles[i]);
+          state.mergeFiles = reordered;
+          renderMergeFileList();
+        });
+
+        item.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          if (item !== draggedItem && item !== currentDragOver) {
+            if (currentDragOver) currentDragOver.classList.remove('drag-over-item');
+            currentDragOver = item;
+            item.classList.add('drag-over-item');
+          }
+        });
+
+        item.addEventListener('drop', (e) => {
+          e.preventDefault();
+          if (item !== draggedItem && draggedItem) {
+            const items = Array.from(mergeFileList.querySelectorAll('.merge-file-item'));
+            const dragIdx = items.indexOf(draggedItem);
+            const dropIdx = items.indexOf(item);
+            if (dragIdx < dropIdx) {
+              item.after(draggedItem);
+            } else {
+              item.before(draggedItem);
+            }
+          }
+        });
+      });
+    }
+
+    applyMergeBtn.addEventListener('click', async () => {
+      if (state.mergeFiles.length < 2) return;
+
+      const btn = applyMergeBtn;
+      btn.disabled = true;
+      const progressBar = $('mergeProgress');
+      const progressFill = $('mergeProgressFill');
+      const progressText = $('mergeProgressText');
+      progressBar.classList.add('visible');
+      progressText.classList.add('visible');
+
+      try {
+        const newDoc = await PDFLib.PDFDocument.create();
+
+        for (let i = 0; i < state.mergeFiles.length; i++) {
+          progressText.textContent = `${i + 1} / ${state.mergeFiles.length} ファイルを結合中...`;
+          progressFill.style.width = `${((i + 1) / state.mergeFiles.length) * 100}%`;
+
+          const srcDoc = await PDFLib.PDFDocument.load(state.mergeFiles[i].bytes);
+          const indices = Array.from({ length: srcDoc.getPageCount() }, (_, j) => j);
+          const copiedPages = await newDoc.copyPages(srcDoc, indices);
+          copiedPages.forEach(page => newDoc.addPage(page));
+        }
+
+        const pdfBytesOut = await newDoc.save();
+        saveAs(new Blob([pdfBytesOut], { type: 'application/pdf' }), 'merged.pdf');
+        progressText.textContent = '完了！';
+      } catch (err) {
+        progressText.textContent = 'エラー: ' + err.message;
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => {
+          progressBar.classList.remove('visible');
+          progressText.classList.remove('visible');
+          progressFill.style.width = '0%';
+        }, 2000);
       }
     });
   </script>
